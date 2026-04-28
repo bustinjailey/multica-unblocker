@@ -1,0 +1,23 @@
+[Unit]
+Description=multica-unblocker — auto-resume blocked issues when their referenced blockers are done
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=multica
+Group=multica
+WorkingDirectory=/opt/multica-unblocker
+EnvironmentFile=/etc/multica-unblocker/env
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
