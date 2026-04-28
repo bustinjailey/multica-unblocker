@@ -40,8 +40,15 @@ beyond a 5-minute per-issue dedupe window to avoid double-acting.
 
 ## Install
 
-Repo lives at `/opt/multica-unblocker` on LXC 122 (alongside
-`multica-mobile-push`).
+Clone to a stable path on the host that will run the service (e.g.
+`/opt/multica-unblocker`):
+
+```bash
+git clone https://github.com/bustinjailey/multica-unblocker /opt/multica-unblocker
+cd /opt/multica-unblocker && CI=true bash deploy/install.sh
+```
+
+To update later:
 
 ```bash
 cd /opt/multica-unblocker && git pull && CI=true bash deploy/install.sh
@@ -55,8 +62,8 @@ confirm the decisions make sense, then flip `DRY_RUN=false` and restart.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `MULTICA_URL` | `http://localhost:8080` | Internal address (DNS hairpin issue from inside LXC 122) |
-| `WORKSPACE_SLUG` | _required_ | e.g. `snapview` |
+| `MULTICA_URL` | `http://localhost:8080` | Multica API base URL (use the internal address if running co-located with the backend) |
+| `WORKSPACE_SLUG` | _required_ | your Multica workspace slug |
 | `MULTICA_PAT` | _required_ | long-lived PAT with read+write |
 | `POLL_INTERVAL_MS` | `60000` | scan cadence |
 | `DEFAULT_RESUME_STATUS` | `todo` | fallback when activity log lacks a previous status |
@@ -77,9 +84,9 @@ curl -s http://localhost:7892/health
 - **All blocked issues skipped with "no parseable blockers"** — the
   blocker comments don't contain `mention://issue/<id>` markup. Either
   agents are writing blockers in prose (no link) or referencing them by
-  identifier without the markdown form. Add a "Blocked: see SNA-…"
+  identifier without the markdown form. Add a "Blocked: see <ID>…"
   comment with a proper mention link, or extend the parser to recognize
-  bare `SNA-…` identifiers in the "Blocked:" comment.
+  bare identifiers in the "Blocked:" comment.
 - **Issue auto-resumed but the agent didn't pick it up** — check whether
   reassigning to that agent triggers a fresh dispatch on your Multica
   build. If not, wire a follow-up `mention://agent/<id>` ping in the
