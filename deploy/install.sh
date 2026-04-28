@@ -1,6 +1,6 @@
 #!/bin/bash
-# Install / update multica-unblocker on LXC 122. Idempotent.
-# Run from /opt/multica-unblocker as root after `git pull`.
+# Install / update multica-unblocker. Idempotent.
+# Run from $INSTALL_DIR as root after `git pull`.
 set -euo pipefail
 
 INSTALL_DIR="/opt/multica-unblocker"
@@ -20,9 +20,9 @@ mkdir -p "$ENV_DIR"
 
 if [ ! -f "$ENV_DIR/env" ]; then
     cat > "$ENV_DIR/env" <<EOF
-# multica-unblocker environment. Seed MULTICA_PAT before starting.
+# multica-unblocker environment. Seed WORKSPACE_SLUG and MULTICA_PAT before starting.
 MULTICA_URL=http://localhost:8080
-WORKSPACE_SLUG=snapview
+WORKSPACE_SLUG=
 MULTICA_PAT=
 # How often (ms) to scan blocked issues. 60s is plenty — most blockers clear
 # minutes-to-hours after being filed.
