@@ -153,6 +153,18 @@ function mostRecentBlockTimestamp(timeline: TimelineEntry[]): string | null {
 // Walk the activity log to recover what the issue looked like before it was
 // blocked, so we can put it back. Returns nulls when the log doesn't carry
 // that info — caller substitutes defaults.
+//
+// Assignee recovery strategy (in order of preference):
+//   1. Most recent `assignee_changed` activity at/before the block whose
+//      `to_type` is `agent`. Captures the canonical case where someone
+//      (member or agent) routed the issue to an agent and that agent later
+//      moved it to blocked.
+//   2. The actor of the `status_changed → blocked` activity itself, if that
+//      actor is an agent. Catches the case where no `assignee_changed`
+//      activity exists in the log but an agent put the issue into blocked.
+// We deliberately don't restore member assignees — humans monitor their own
+// queues; agents need an explicit assignment to pick the issue back up, and
+// without it the issue sits stalled in TODO (the bug this is fixing).
 function findPreBlockState(timeline: TimelineEntry[]): {
   previousStatus: string | null;
   previousAssignee: { type: string; id: string } | null;
@@ -163,28 +175,37 @@ function findPreBlockState(timeline: TimelineEntry[]): {
 
   let previousStatus: string | null = null;
   let blockedAt: string | null = null;
+  let blockActor: { type: string; id: string } | null = null;
   for (const a of activities) {
     const d = a.details as { to?: string; from?: string } | undefined;
     if (a.action === 'status_changed' && d?.to === 'blocked') {
       previousStatus = d.from || null;
       blockedAt = a.created_at;
+      if (a.actor_type && a.actor_id) {
+        blockActor = { type: a.actor_type, id: a.actor_id };
+      }
       break;
     }
   }
 
   let previousAssignee: { type: string; id: string } | null = null;
   if (blockedAt) {
-    // Look for an assignee_changed within ~2 minutes of the block — the
-    // typical agent flow flips status + assignee in the same write.
     const blockedTime = Date.parse(blockedAt);
-    const candidate = activities.find(a => {
+    // Primary: most recent `assignee_changed → agent` at or before the block.
+    // `activities` is already sorted desc, so the first match is the most recent.
+    const agentAssign = activities.find(a => {
       if (a.action !== 'assignee_changed') return false;
-      const dt = Math.abs(Date.parse(a.created_at) - blockedTime);
-      return dt < 2 * 60 * 1000;
+      if (Date.parse(a.created_at) > blockedTime) return false;
+      const d = a.details as { to_type?: string; to_id?: string } | undefined;
+      return d?.to_type === 'agent' && !!d.to_id;
     });
-    const cd = candidate?.details as { from_type?: string; from_id?: string } | undefined;
-    if (cd?.from_type && cd?.from_id) {
-      previousAssignee = { type: cd.from_type, id: cd.from_id };
+    const ad = agentAssign?.details as { to_type?: string; to_id?: string } | undefined;
+    if (ad?.to_type && ad?.to_id) {
+      previousAssignee = { type: ad.to_type, id: ad.to_id };
+    } else if (blockActor?.type === 'agent') {
+      // Fallback: the agent that put the issue into blocked is the one that
+      // was last working on it.
+      previousAssignee = blockActor;
     }
   }
 
