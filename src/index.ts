@@ -1,7 +1,7 @@
 // multica-unblocker — periodically scans blocked issues, parses mention://issue/<id>
 // blocker links from the description + most-recent "Blocked:" comment, and
 // auto-resumes (status, assignee, comment) when every linked blocker is in a
-// terminal state. Runs as a systemd service on LXC 122.
+// terminal state. Designed to run as a systemd service alongside Multica.
 //
 // Design notes:
 //   * Stateless across restarts. Multica's own status field is the source of
@@ -38,7 +38,7 @@ function requireEnv(k: string): string {
 }
 
 const config: Config = {
-  multicaUrl: process.env.MULTICA_URL || 'https://multica.bustinjailey.org',
+  multicaUrl: process.env.MULTICA_URL || 'http://localhost:8080',
   multicaPat: requireEnv('MULTICA_PAT'),
   workspaceSlug: requireEnv('WORKSPACE_SLUG'),
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS || 60_000),
