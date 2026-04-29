@@ -26,6 +26,7 @@ interface Config {
   listenPort: number;
   listenHost: string;
   dryRun: boolean;
+  maxResumesPerIssue: number;   // give up after this many resumes against the same blocker set (0 = unlimited)
 }
 
 function requireEnv(k: string): string {
@@ -46,6 +47,7 @@ const config: Config = {
   listenPort: Number(process.env.LISTEN_PORT || 7892),
   listenHost: process.env.LISTEN_HOST || '127.0.0.1',
   dryRun: (process.env.DRY_RUN || 'false').toLowerCase() === 'true',
+  maxResumesPerIssue: Number(process.env.MAX_RESUMES_PER_ISSUE || 5),
 };
 
 const TERMINAL_BLOCKER_STATUSES = new Set(['done', 'cancelled', 'completed']);
@@ -334,6 +336,24 @@ async function unblock(issue: Issue, decision: UnblockDecision): Promise<void> {
 const recentlyActed = new Map<string, number>();
 const RECENT_TTL = 5 * 60 * 1000;
 
+// Per-issue resume counter, scoped by the set of blocker IDs that triggered
+// the resume. If the issue keeps cycling back to blocked against the same
+// set of (already-cleared) blockers, we eventually disengage so the agent
+// stops thrashing on a problem it clearly can't solve. Adding a NEW blocker
+// reference resets the counter — that signals fresh human/agent intent.
+//
+// In-memory only; a service restart resets all counters. That's fine: the
+// service rarely restarts, and a restart usually means a human has already
+// stepped in.
+interface ResumeRecord {
+  count: number;
+  blockerKey: string;
+}
+const resumeCounts = new Map<string, ResumeRecord>();
+function blockerKeyOf(decision: UnblockDecision): string {
+  return decision.blockers.map(b => b.identifier).sort().join(',');
+}
+
 async function tick(): Promise<void> {
   // Snapshot of dedupe set on each tick — drop entries older than the TTL.
   const cutoff = Date.now() - RECENT_TTL;
@@ -360,8 +380,38 @@ async function tick(): Promise<void> {
         console.log(`[skip] ${issue.identifier}: ${decision.reason}`);
         continue;
       }
+
+      // Iteration-cap check: if this issue has already cycled through too
+      // many (resume → re-block) rounds against the SAME blocker set, post a
+      // give-up comment once and stop touching it.
+      const key = blockerKeyOf(decision);
+      const prior = resumeCounts.get(issue.id);
+      const sameSet = prior && prior.blockerKey === key;
+      const nextCount = sameSet ? prior!.count + 1 : 1;
+      if (config.maxResumesPerIssue > 0 && sameSet && prior!.count >= config.maxResumesPerIssue) {
+        // Already at cap. Skip silently — the give-up comment was posted on
+        // the resume that hit the cap.
+        console.log(`[cap] ${issue.identifier}: at resume cap (${prior!.count}/${config.maxResumesPerIssue}) for blocker set [${key}] — disengaged`);
+        continue;
+      }
+
       await unblock(issue, decision);
       recentlyActed.set(issue.id, Date.now());
+      resumeCounts.set(issue.id, { count: nextCount, blockerKey: key });
+
+      // If this resume just hit the cap, post a one-time give-up comment so
+      // the next time the issue lands back in `blocked`, the [cap] branch
+      // above kicks in and we leave it alone.
+      if (config.maxResumesPerIssue > 0 && nextCount >= config.maxResumesPerIssue && !config.dryRun) {
+        try {
+          await api<unknown>('POST', `/api/issues/${issue.id}/comments`, {
+            content: `Auto-resume cap reached (${nextCount}/${config.maxResumesPerIssue}). This issue has cycled back to **blocked** ${nextCount} times against the same set of cleared blocker(s) (${key || 'none'}). The unblocker is disengaging — please investigate the underlying cause and either resolve manually or update the blocker references on this issue to reset the cap.`,
+          });
+          console.log(`[cap] ${issue.identifier}: posted give-up comment after ${nextCount} resumes`);
+        } catch (e) {
+          console.warn(`[cap] ${issue.identifier}: failed to post give-up comment: ${(e as Error).message}`);
+        }
+      }
     } catch (e) {
       console.warn(`[err] ${issue.identifier}: ${(e as Error).message}`);
     }
@@ -385,7 +435,13 @@ async function loop(): Promise<void> {
 const server = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, recentlyActed: recentlyActed.size }));
+    res.end(JSON.stringify({
+      ok: true,
+      recentlyActed: recentlyActed.size,
+      tracked: resumeCounts.size,
+      capped: [...resumeCounts.values()].filter(r => config.maxResumesPerIssue > 0 && r.count >= config.maxResumesPerIssue).length,
+      maxResumesPerIssue: config.maxResumesPerIssue,
+    }));
     return;
   }
   res.writeHead(404);
@@ -397,7 +453,7 @@ server.listen(config.listenPort, config.listenHost, () => {
 
 // ===================== Boot =====================
 
-console.log(`[boot] poll interval ${config.pollIntervalMs}ms, default resume status '${config.defaultResumeStatus}', dry-run=${config.dryRun}`);
+console.log(`[boot] poll interval ${config.pollIntervalMs}ms, default resume status '${config.defaultResumeStatus}', dry-run=${config.dryRun}, max-resumes-per-issue=${config.maxResumesPerIssue || 'unlimited'}`);
 process.on('SIGTERM', () => { stopping = true; server.close(); });
 process.on('SIGINT', () => { stopping = true; server.close(); });
 loop().then(() => process.exit(0));

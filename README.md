@@ -70,6 +70,7 @@ confirm the decisions make sense, then flip `DRY_RUN=false` and restart.
 | `LISTEN_PORT` | `7892` | health endpoint port (`GET /health`) |
 | `LISTEN_HOST` | `127.0.0.1` | bind address |
 | `DRY_RUN` | `true` (template default) | log decisions without acting |
+| `MAX_RESUMES_PER_ISSUE` | `5` | give up after this many resumes against the *same* blocker set; `0` disables. Adding a new blocker reference resets the counter (signals fresh intent). When the cap is hit, a one-time give-up comment is posted and the issue is left blocked. In-memory only — service restart resets all counters. |
 
 ## Operate
 
